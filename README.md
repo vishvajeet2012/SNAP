@@ -2,10 +2,12 @@
 
 Live 16:9 camera feed from the latest image/video in **Downloads** (drag-drop, history, any video type).
 
-## Run
+## Run (one click)
+
+Desktop par **SNAP Camera Start** double-click, ya:
 
 ```bat
-START.bat
+START_ALL.bat
 ```
 
 Or:

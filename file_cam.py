@@ -8,6 +8,7 @@ import hashlib
 import html
 import json
 import mimetypes
+import os
 import shutil
 import subprocess
 import sys
@@ -496,22 +497,51 @@ def stop_audio() -> None:
             pass
 
 
+def force_usb_speakers() -> None:
+    """Voicemeeter steals default output; send sound to USB speakers."""
+    try:
+        from comtypes import CLSCTX_ALL, GUID, CoCreateInstance
+        from pycaw.api.policyconfig import IPolicyConfig
+        from pycaw.pycaw import AudioUtilities
+
+        target = None
+        for d in AudioUtilities.GetAllDevices():
+            name = (d.FriendlyName or "").lower()
+            if "usb audio" in name and str(d.state).endswith("Active") and "microphone" not in name:
+                if str(d.id).startswith("{0.0.0."):
+                    target = d.id
+                    break
+        if not target:
+            return
+        pc = CoCreateInstance(GUID("{870af99c-171d-4f9e-af0d-e63df40c2bc9}"), IPolicyConfig, CLSCTX_ALL)
+        for role in (0, 1, 2):
+            pc.SetDefaultEndpoint(target, role)
+        print("playback device: USB speakers", flush=True)
+    except Exception as exc:
+        print(f"speaker switch skipped: {exc}", flush=True)
+
+
 def play_audio(path: Path) -> None:
-    """Play video soundtrack to Windows speakers (and default loopback/mic path)."""
+    """Play video soundtrack to USB speakers."""
     global audio_proc
     stop_audio()
+    force_usb_speakers()
     player = find_ffplay()
     if not player:
         print("ffplay missing — no soundtrack", flush=True)
         return
+    env = os.environ.copy()
+    env["SDL_AUDIODRIVER"] = "directsound"
+    env["AUDIODEV"] = "Speakers (3- USB Audio Device)"
     flags = 0
     if hasattr(subprocess, "CREATE_NO_WINDOW"):
         flags = subprocess.CREATE_NO_WINDOW
     audio_proc = subprocess.Popen(
-        [player, "-nodisp", "-autoexit", "-loop", "0", "-vn", "-volume", "100", "-loglevel", "quiet", str(path)],
+        [player, "-nodisp", "-autoexit", "-loop", "0", "-vn", "-volume", "100", str(path)],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         creationflags=flags,
+        env=env,
     )
     print(f"audio playing: {path.name}", flush=True)
 
@@ -627,16 +657,16 @@ def obs_apply_size(w: int, h: int) -> None:
                     "width": 1920,
                     "height": 1080,
                     "url": "http://127.0.0.1:8765/clean?v=audio2",
-                    "reroute_audio": True,
+                    "reroute_audio": False,
                 },
                 overlay=True,
             )
             try:
-                cl.set_input_mute("FileCam", False)
+                cl.set_input_mute("FileCam", True)
             except Exception:
                 pass
             try:
-                cl.set_input_audio_monitor_type("FileCam", "OBS_MONITORING_TYPE_MONITOR_AND_OUTPUT")
+                cl.set_input_audio_monitor_type("FileCam", "OBS_MONITORING_TYPE_NONE")
             except Exception:
                 pass
             try:
