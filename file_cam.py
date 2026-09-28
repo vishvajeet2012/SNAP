@@ -497,42 +497,86 @@ def stop_audio() -> None:
             pass
 
 
-def force_usb_speakers() -> None:
-    """Voicemeeter steals default output; send sound to USB speakers."""
-    try:
-        from comtypes import CLSCTX_ALL, GUID, CoCreateInstance
-        from pycaw.api.policyconfig import IPolicyConfig
-        from pycaw.pycaw import AudioUtilities
+def _set_default_endpoints(play_id: str, rec_id: str) -> None:
+    from comtypes import CLSCTX_ALL, GUID, CoCreateInstance
+    from pycaw.api.policyconfig import IPolicyConfig
 
-        target = None
-        for d in AudioUtilities.GetAllDevices():
-            name = (d.FriendlyName or "").lower()
-            if "usb audio" in name and str(d.state).endswith("Active") and "microphone" not in name:
-                if str(d.id).startswith("{0.0.0."):
-                    target = d.id
-                    break
-        if not target:
-            return
-        pc = CoCreateInstance(GUID("{870af99c-171d-4f9e-af0d-e63df40c2bc9}"), IPolicyConfig, CLSCTX_ALL)
-        for role in (0, 1, 2):
-            pc.SetDefaultEndpoint(target, role)
-        print("playback device: USB speakers", flush=True)
-    except Exception as exc:
-        print(f"speaker switch skipped: {exc}", flush=True)
+    pc = CoCreateInstance(GUID("{870af99c-171d-4f9e-af0d-e63df40c2bc9}"), IPolicyConfig, CLSCTX_ALL)
+    for role in (0, 1, 2):
+        pc.SetDefaultEndpoint(play_id, role)
+        pc.SetDefaultEndpoint(rec_id, role)
+
+
+def route_audio_for_record() -> None:
+    """Video soundtrack -> Voicemeeter -> USB speakers + default MIC (so record/send gets voice)."""
+    import ctypes
+    from pycaw.pycaw import AudioUtilities
+
+    exe = Path(r"C:\Program Files (x86)\VB\Voicemeeter\voicemeeter_x64.exe")
+    dll_path = Path(r"C:\Program Files (x86)\VB\Voicemeeter\VoicemeeterRemote64.dll")
+    if exe.is_file() and not running_proc("voicemeeter_x64.exe"):
+        subprocess.Popen([str(exe)], close_fds=True)
+        time.sleep(5)
+    if not dll_path.is_file():
+        print("Voicemeeter missing", flush=True)
+        return
+    dll = ctypes.WinDLL(str(dll_path))
+    dll.VBVMR_RunVoicemeeter(1)
+    time.sleep(1)
+    login = -1
+    for _ in range(10):
+        login = dll.VBVMR_Login()
+        if login == 0:
+            break
+        time.sleep(0.5)
+    if login != 0:
+        print(f"Voicemeeter login {login}", flush=True)
+        return
+    dll.VBVMR_SetParameterFloat.argtypes = [ctypes.c_char_p, ctypes.c_float]
+    dll.VBVMR_SetParameterStringA.argtypes = [ctypes.c_char_p, ctypes.c_char_p]
+    dll.VBVMR_SetParameterFloat(b"Strip[2].A1", 1.0)
+    dll.VBVMR_SetParameterFloat(b"Strip[2].B1", 1.0)
+    dll.VBVMR_SetParameterFloat(b"Strip[2].Mute", 0.0)
+    dll.VBVMR_SetParameterFloat(b"Bus[0].Mute", 0.0)
+    dll.VBVMR_SetParameterFloat(b"Bus[2].Mute", 0.0)
+    dll.VBVMR_SetParameterStringA(b"Bus[0].Device.WDM", b"Speakers (3- USB Audio Device)")
+    play_id = rec_id = None
+    for d in AudioUtilities.GetAllDevices():
+        n = d.FriendlyName or ""
+        if n == "Voicemeeter Input (VB-Audio Voicemeeter VAIO)":
+            play_id = d.id
+        if n == "Voicemeeter Out B1 (VB-Audio Voicemeeter VAIO)":
+            rec_id = d.id
+    if play_id and rec_id:
+        _set_default_endpoints(play_id, rec_id)
+        print("mic for record: Voicemeeter Out B1", flush=True)
+
+
+def running_proc(name: str) -> bool:
+    try:
+        out = subprocess.check_output(
+            ["tasklist", "/FI", f"IMAGENAME eq {name}", "/NH"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        return name.lower() in out.lower()
+    except Exception:
+        return False
 
 
 def play_audio(path: Path) -> None:
-    """Play video soundtrack to USB speakers."""
+    """Play soundtrack into Voicemeeter so speakers AND recording mic get the voice."""
     global audio_proc
     stop_audio()
-    force_usb_speakers()
+    try:
+        route_audio_for_record()
+    except Exception as exc:
+        print(f"audio route failed: {exc}", flush=True)
     player = find_ffplay()
     if not player:
         print("ffplay missing — no soundtrack", flush=True)
         return
-    env = os.environ.copy()
-    env["SDL_AUDIODRIVER"] = "directsound"
-    env["AUDIODEV"] = "Speakers (3- USB Audio Device)"
     flags = 0
     if hasattr(subprocess, "CREATE_NO_WINDOW"):
         flags = subprocess.CREATE_NO_WINDOW
@@ -541,7 +585,6 @@ def play_audio(path: Path) -> None:
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         creationflags=flags,
-        env=env,
     )
     print(f"audio playing: {path.name}", flush=True)
 

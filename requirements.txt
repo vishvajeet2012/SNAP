@@ -5,3 +5,5 @@ numpy
 pyvirtualcam
 obsws-python
 uiautomation
+pycaw
+comtypes
