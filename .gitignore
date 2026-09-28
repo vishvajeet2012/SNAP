@@ -1,0 +1,12 @@
+history/
+watch/
+__pycache__/
+*.pyc
+*.log
+.obs_ws.json
+*.mp4
+*.jpg
+*.png
+*.webp
+*.mkv
+*.avi

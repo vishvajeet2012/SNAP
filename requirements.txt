@@ -1,0 +1,7 @@
+opencv-python
+watchdog
+pillow
+numpy
+pyvirtualcam
+obsws-python
+uiautomation
